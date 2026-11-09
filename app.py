@@ -5,7 +5,7 @@ app = Flask(__name__)
 
 @app.get("/")
 def index():
-    return "version v1\n"
+    return "version v2\n"
 
 
 if __name__ == "__main__":

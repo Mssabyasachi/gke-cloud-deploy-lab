@@ -6,4 +6,4 @@ def test_homepage():
     response = client.get("/")
 
     assert response.status_code == 200
-    assert response.data == b"version v1\n"
+    assert response.data == b"version v2\n"
