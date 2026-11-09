@@ -1,0 +1,97 @@
+
+name: Flask CI/CD to GKE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: flask-gke-deployment
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: gke-cloud-deploy-lab
+  REGION: asia-south1
+  CLUSTER: gke-deploy-lab
+  REPOSITORY: gke-deploy-repo
+  IMAGE_NAME: gke-flask-app
+  NAMESPACE: default
+
+jobs:
+  test:
+    name: Run unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install -r requirements-dev.txt
+
+      - name: Run unit tests
+        run: python -m pytest -v
+
+  deploy:
+    name: Build and deploy to GKE
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          workload_identity_provider: projects/919834092574/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider
+          service_account: github-actions-deployer@gke-cloud-deploy-lab.iam.gserviceaccount.com
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          install_components: kubectl
+
+      - name: Authenticate Docker to Artifact Registry
+        run: |
+          gcloud auth configure-docker \
+            "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push Docker image
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v3
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.REGION }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Deploy to GKE
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${GITHUB_SHA}"
+
+          kubectl set image deployment/gke-flask-app \
+            gke-flask-app="$IMAGE" \
+            --namespace="$NAMESPACE"
+
+          kubectl rollout status deployment/gke-flask-app \
+            --namespace="$NAMESPACE" \
+            --timeout=300s
+
